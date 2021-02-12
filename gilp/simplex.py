@@ -18,6 +18,7 @@ from typing import Union, List, Tuple
 import warnings
 
 BFS = namedtuple('bfs', ['x', 'B', 'obj_val', 'optimal'])
+BIS = namedtuple('bis', ['x', 'B'])
 BFS.__doc__ = '''\
 Basic feasible solution (BFS) for a linear program (LP).
 
@@ -26,6 +27,11 @@ Basic feasible solution (BFS) for a linear program (LP).
 - obj_val (float): Objective value of the basic feasible solution.
 - optimal (bool): True if x is known to be optimal. False otherwise.'''
 
+BIS.__doc__ = '''\
+Basic infeasible solution (BFS) for a linear program (LP).
+
+- x (np.ndarray): Basic feasible solution.
+- B (List[int]): Basis for the basic infeasible solution.'''
 
 class UnboundedLinearProgram(Exception):
     """Raised when an LP is found to be unbounded during an execution of the
@@ -49,6 +55,10 @@ class InfeasibleBasicSolution(Exception):
     basic solution is infeasible."""
     pass
 
+class FeasibleBasicSolution(Exception):
+    """Raised when a list of indices forms a valid basis but the corresponding
+    basic solution is feasible."""
+    pass
 
 class LP:
     """Maintains the coefficents and size of a linear program (LP).
@@ -187,8 +197,49 @@ class LP:
                            optimal=False)
             else:
                 raise InfeasibleBasicSolution(x_B)
+                
         else:
             raise InvalidBasis(B)
+
+    def get_basic_infeasible_sol(self,
+                               B: List[int],
+                               feas_tol: float = 1e-7) -> BFS:
+        """Return the basic infeasible solution corresponding to this basis.
+
+        By definition, B is a basis iff A_B is invertible (where A is the
+        matrix of coefficents in standard equality form). The corresponding
+        basic solution x satisfies A_Bx = b. By definition, x is a basic
+        feasible solution iff x satisfies both A_Bx = b and x > 0. These
+        constraints must be satisfied to a tolerance of feas_tol (which is set
+        to 1e-7 by default). If the solution does not satisfy the constraint x>0, the solution is infeasible.
+
+        Args:
+            B (List[int]): A list of indices in {0..(n+m-1)} forming a basis.
+            feas_tol (float): Primal feasibility tolerance (1e-7 by default).
+
+        Returns:
+            BFS: Basic infeasible solution corresponding to the basis B.
+
+        Raises:
+            InvalidBasis: B            
+        """
+        n,m,A,b,c = self.get_coefficients()
+        B.sort()
+        if len(B) == m and B[-1] < n:
+            try:
+                x = solve(A[:,B], b)
+            except LinAlgError:
+                raise InvalidBasis(B)
+            x_B = np.zeros((n, 1))
+            x_B[B,:] = x
+            if not all(x_B >= np.zeros((n, 1)) - feas_tol):
+                return BIS(x=x_B,
+                           B=B)            
+            else:
+                raise FeasibleBasicSolution(x_B)
+        else:
+            raise InvalidBasis(B)
+
 
     def get_basic_feasible_solns(self) -> List[BFS]:
         """Return all the basic feasible solutions.
@@ -204,7 +255,22 @@ class LP:
             except (InvalidBasis, InfeasibleBasicSolution):
                 pass
         return bfs
+    
+    def get_basic_infeasible_solns(self) -> List:
+        """Return all the basic infeasible solutions.
 
+        Returns:
+            List: List of basic infeasible solutions.
+        """
+        n,m,A,b,c = self.get_coefficients()
+        bis = []
+        for B in itertools.combinations(range(n), m):
+            try:
+                bis.append(self.get_basic_infeasible_sol(list(B)))
+            except (FeasibleBasicSolution,InvalidBasis):
+                pass
+        return bis
+    
     def get_tableau(self, B: List[int]) -> np.ndarray:
         """Return the tableau corresponding to the basis B for this LP.
 
